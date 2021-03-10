@@ -162,6 +162,7 @@
              (fn [{result# :result current-type# :current-type exception# :exception :as acc#}
                   {form-type# :form-type form-fn# :form-fn}]
 
+
                (cond
                  (and (= :result current-type#) (= :form form-type#))
                  (try
@@ -176,7 +177,9 @@
                      (if (exception? res#)
                        (assoc acc# :exception res#)
                        {:result res#
-                        :current-type :result})))
+                        :current-type :result}))
+                   (catch Exception e#
+                     (assoc acc# :exception e#)))
 
                  :else acc#))
              {:result ~expr
@@ -185,6 +188,17 @@
        (if (= :exception current-type#)
          (throw exception#)
          result#))))
+
+(comment
+  (macroexpand-1 '(try-as-> 1 $
+                    (/ $ 0)
+                    (catch-matching e
+                      ArithmeticException
+                      (ex-info! "Other ex" {:foo :bar}))
+                    (catch-matching e
+                      {:foo :bar}
+                      (ex-info "Other other ex" {}))))
+  )
 
 (defn- make-try+-catch-matching [form]
   (let [ex-binding (:ex-binding form)]
@@ -213,6 +227,21 @@
        ~@body
        ~@(make-try+-catch-matching-and-finally conformed))))
 
+(defn- make-try-let-catch-matching [form]
+  (let [ex-binding (:ex-binding form)]
+    `(catch Exception ~ex-binding
+       (let [res# ~(make-catch-matching-cond form)]
+         (if (exception? res#)
+           (throw res#)
+           [false res#])))))
+
+(defn- make-try-let-catch-matching-and-finally [forms]
+  (let [catch-matching-body (get-in forms [:catch-matching :catch-matching-body])
+        finally-body (get-in forms [:finally :finally-body])]
+    (cond-> []
+      catch-matching-body (conj (make-try-let-catch-matching catch-matching-body))
+      finally-body (conj (make-try+-finally finally-body)))))
+
 (defmacro try-let [& args]
   (check-asserts #(s/assert ::try-let args))
   (let [conformed (s/conform ::try-let args)
@@ -224,7 +253,7 @@
     `(let [[ok# ~@gensyms]
            (try
              (let [~@bindings-destructured] [true ~@bindings-ls])
-             ~@(make-try+-catch-matching-and-finally stanzas))]
+             ~@(make-try-let-catch-matching-and-finally stanzas))]
        (if ok#
          (let [~@(interleave bindings-ls gensyms)]
            ~@body)
