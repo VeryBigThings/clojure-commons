@@ -1,9 +1,9 @@
 (ns com.verybigthings.commons.aws
   (:require [clojure.string :as s]
+            [clojure.data.codec.base64 :as base64]
             [buddy.core.keys :as bk]
             [tick.alpha.api :as t])
-  (:import (java.util Base64)
-           (java.security Signature SecureRandom)
+  (:import (java.security Signature SecureRandom)
            (com.amazonaws HttpMethod)
            (com.amazonaws.regions Regions)
            (com.amazonaws.services.s3 AmazonS3ClientBuilder)
@@ -14,8 +14,12 @@
   (str "{\"Statement\":[{\"Condition\":{\"DateLessThan\":{\"AWS:EpochTime\":" epoch-expiry-timestamp "}},\"Resource\":\"https://" hostname "/*\"}]}"))
 
 (defn- safe-base64-encode [data]
-  (let [encoder (java.util.Base64/getUrlEncoder)]
-    (.encodeToString encoder data)))
+  (-> data
+    (base64/encode)
+    (String.)
+    (s/replace #"\+" "-")
+    (s/replace #"\=" "_")
+    (s/replace #"\/" "~")))
 
 (defn- sign [key data]
   (let [data (.getBytes data)
