@@ -1,10 +1,11 @@
 (ns com.verybigthings.commons.aws-test
   (:require [clojure.test :refer :all]
-            [clojure.string :refer [includes? starts-with?]]
+            [clojure.string :as s]
+            [clojure.data.codec.base64 :as base64]
             [com.verybigthings.commons.aws :refer [cdn-cookies presigned-url]]
-            [buddy.core.keys :as bk])
-  (:import (java.util Base64)
-           (java.security Signature)))
+            [buddy.core.keys :as bk]
+            [lambdaisland.uri :refer [uri query-string->map]])
+  (:import (java.security Signature)))
 
 (def mock-data {:hostname "www.verybigthings.com"
                 :epoch-expiry-timestamp 1908873209
@@ -16,15 +17,22 @@
                 :secret-access-key "4524b08bd853463fa0aa0f75e3c67a0a"
                 :aws-region "us-east-1"})
 
+(defn- safe-base64-decode [data]
+  (-> data
+    (s/replace #"\-" "+")
+    (s/replace #"\_" "=")
+    (s/replace #"\~" "/")
+    (.getBytes)
+    (base64/decode)))
+
 (deftest test-cdn-cookies
   (testing "Generate AWS CloudFront cookies"
     (let [cookies (cdn-cookies (:hostname mock-data)
                     (:epoch-expiry-timestamp mock-data)
                     (:cdn-access-key-id mock-data)
                     (:cdn-private-key mock-data))
-          decoder (Base64/getUrlDecoder)
-          policy-decoded (String. (.decode decoder (:cloudfront-policy cookies)))
-          signature-decoded (.decode decoder (:cloudfront-signature cookies))
+          policy-decoded (String. (base64/decode (.getBytes (:cloudfront-policy cookies))))
+          signature-decoded (safe-base64-decode (:cloudfront-signature cookies))
           cipher (doto (Signature/getInstance "SHA1withRSA")
                    (.initVerify (bk/str->public-key (:cdn-public-key mock-data)))
                    (.update (.getBytes policy-decoded)))]
@@ -42,7 +50,7 @@
           url (presigned-url access-key-id (:secret-access-key mock-data) region
                 bucket path expires)
           expected-url (str "https://" bucket ".s3.amazonaws.com/" path)]
-      (is (starts-with? url expected-url))
-      (is (includes? url region))
-      (is (includes? url (str "X-Amz-Expires=" (* expires 60))))
-      (is (includes? url (str "X-Amz-Credential=" access-key-id))))))
+      (is (s/starts-with? url expected-url))
+      (is (s/includes? url region))
+      (is (<= (Integer/parseInt (:X-Amz-Expires (query-string->map url))) (* expires 60)))
+      (is (s/includes? url (str "X-Amz-Credential=" access-key-id))))))
